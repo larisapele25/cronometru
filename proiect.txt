@@ -1,0 +1,219 @@
+`define IDLE 3'b000
+`define START 3'b001
+`define STOP 3'b010
+`define RESET 3'b100
+`define MEM 3'b011
+
+module timemanager(
+	input clkm,rstm, en,
+	input [2:0] operatie,
+	output [7:0] sec,min);
+reg [7:0] sec_reg,sec_next;
+reg [2:0] state_reg, state_next;
+reg [7:0] min_reg, min_next;
+reg [3:0] adr_reg,adr_next;
+
+//secvential
+always @(posedge clkm or negedge rstm)
+	begin
+	if(rstm==0) begin
+		sec_reg <= 0;
+		min_reg <=0;
+		state_reg<=0;
+		adr_reg<=0;
+		end
+	else begin
+		sec_reg <= sec_next;
+		min_reg <= min_next;
+		state_reg <= state_next;
+		adr_reg<=adr_next;
+		end
+	end
+//combinational
+always @ (state_reg,state_next,min_reg,sec_reg,operatie)
+	begin
+	state_next=state_reg;
+	case(state_reg)
+	`IDLE:
+		begin
+			sec_next = 0;
+			min_next = 0;
+			if(operatie==3'b001)
+				state_next=`START;
+		end
+	`START:
+		begin
+			sec_next=sec_reg;
+			min_next=min_reg;
+			if(en)
+			begin
+				if(sec_reg == 59)
+				begin
+					sec_next=0;
+					min_next=min_next+1;
+				end
+				else
+				sec_next=sec_reg+1;
+				if(min_reg == 59)
+				min_next=0;
+			end
+			if(operatie == 3'b010)
+			state_next = `MEM;
+			if(operatie == 3'b100)
+			state_next = `RESET;
+			if(operatie == 3'b000)
+			state_next = `IDLE;
+			
+		end
+	`STOP:
+		begin
+			if(operatie == 3'b010)
+			state_next = `MEM;
+			if(operatie == 3'b001)
+			state_next = `START;
+			
+		end
+	`MEM:
+		begin
+			
+			adr_next=adr_reg+1;
+			state_next= `STOP;
+		end
+	`RESET:
+		begin
+			if(operatie == 3'b001)
+			state_next = `IDLE;
+		end
+			
+	endcase
+	end
+
+assign sec = sec_reg;
+assign min = min_reg;
+endmodule
+
+module hex( input [3:0] cifra, 
+	    output [6:0] hex);
+reg [6:0] hex_reg;
+
+always @(cifra)
+begin
+case(cifra)
+4'b0000: hex_reg=7'b1000000;
+4'b0001: hex_reg=7'b1111001;
+4'b0010: hex_reg=7'b0100100;
+4'b0011: hex_reg=7'b0110000;
+4'b0100: hex_reg=7'b0011001;
+4'b0101: hex_reg=7'b0010010;
+4'b0110: hex_reg=7'b0000010;
+4'b0111: hex_reg=7'b1111000;
+4'b1000: hex_reg=7'b0000000;
+4'b1001: hex_reg=7'b0010000;
+4'b1010: hex_reg=7'b0001000;
+4'b1011: hex_reg=7'b0000011;
+4'b1100: hex_reg=7'b1000110;
+4'b1101: hex_reg=7'b0100001;
+4'b1110: hex_reg=7'b0000110;
+4'b1111: hex_reg=7'b0001110;
+endcase
+end
+assign hex=hex_reg;
+endmodule
+
+module cronometru(input clK,enable,reset,
+		  input [2:0] op,	
+		  output [27:0] timp_hex);
+wire div_clk;
+wire[7:0] min;
+wire[7:0] sec;
+wire[15:0] leg;
+wire[9:0] adresa;
+clock_div x(.clk(clK),.rst(reset),.en(enable),.div_clk(div_clk));
+timemanager y(.clkm(div_clk),.rstm(reset),.en(enable),.operatie(op),.sec(sec),.min(min));
+hex a(.cifra(sec[3:0]), .hex(timp_hex[6:0]));
+hex b(.cifra(sec[7:4]), .hex(timp_hex[13:7]));
+hex c(.cifra(min[3:0]), .hex(timp_hex[20:14]));
+hex d(.cifra(min[7:4]), .hex(timp_hex[27:21]));
+bcd e(.bin(min),.bcd(leg[15:8]));
+bcd f(.bin(sec),.bcd(leg[7:0]));
+BRAM g(.ADDR_IN(adresa),.DATA_IN({sec,min[0]}),.WE(1),.clk(clK),.rst(reset));
+endmodule
+
+module clock_div#(parameter param=50000000)
+  			   (input clk,
+			    input rst,
+ 			    input en, 
+			    output div_clk);
+
+reg [31:0]count_reg, count_nxt;
+reg clk_div_reg,clk_div_nxt;
+  
+
+// combinational logic
+  always @* begin
+  clk_div_nxt=clk_div_reg;
+    if(en) begin
+     if(count_reg==param)
+	begin
+	  count_nxt=0;
+ 	  clk_div_nxt=~clk_div_reg;
+	end
+     else
+	count_nxt=count_reg+1;
+      end
+   end
+  
+  //  sequential logic
+  always @(posedge clk or negedge rst) begin
+    if(rst==0) begin
+      count_reg<=0;
+      clk_div_reg<=0;
+    end else begin
+	count_reg<=count_nxt;
+	clk_div_reg<=clk_div_nxt;
+      end
+  end
+
+	assign div_clk=clk_div_reg;
+
+endmodule 
+
+module BRAM #(parameter WIDTH=8;
+	      parameter ADDR_WIDTH=10)
+	     (input [ADDR_WIDTH-1:0] ADDR_IN,
+	      input [WIDTH-1:0] DATA_IN,
+	      input WE,
+	      input clk,
+	      input rst,
+	      output reg [WIDTH-1:0] DATA_OUT);
+reg [WIDTH-1:0] ram;
+
+always @(posedge clk)
+	begin
+	if(WE)
+	DATA_OUT<=ram[ADDR_IN];
+	ram[ADDR_IN]<=DATA_IN;
+	end
+endmodule
+
+module bcd(
+   input [7:0] bin,
+   output reg [7:0] bcd
+   );
+   
+integer i;
+	
+always @(bin) begin
+    bcd=0;		 	
+    for (i=0;i<8;i=i+1) begin	
+					 
+        if (bcd[3:0] > 4 && i<7) bcd[3:0] = bcd[3:0] + 3;		
+	if (bcd[7:4] > 4 && i<7) bcd[7:4] = bcd[7:4] + 3;
+	bcd = {bcd[6:0],bin[7-i]};				
+    end
+end
+endmodule
+
+
+
+
